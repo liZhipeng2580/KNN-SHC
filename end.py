@@ -1,7 +1,7 @@
 import math
-
+import pandas as pd
 import numpy as np
-from sklearn.datasets import load_iris, load_breast_cancer
+from sklearn.datasets import load_iris, load_breast_cancer, load_wine, load_digits, fetch_openml
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.metrics import normalized_mutual_info_score, adjusted_rand_score
 from sklearn.preprocessing import StandardScaler
@@ -9,7 +9,7 @@ from sklearn.model_selection import train_test_split
 
 
 class KNN_SHC:
-    def __init__(self, X_L, Y_L, X_U, Y_True, lambda_param, k_neighbors=5, max_iterations=10):
+    def __init__(self, X_L, Y_L, X_U, Y_True, lambda_param, k_neighbors=7, max_iterations=1):
         self.X_L = X_L
         self.Y_L = Y_L
         self.X_U = X_U
@@ -94,14 +94,13 @@ class KNN_SHC:
         for i, x in enumerate(self.X_U):
             centroid_distances = {i: np.linalg.norm(x - self.centroids[i]) for i in self.centroids}
             centroid_prediction = min(centroid_distances, key=centroid_distances.get)
-            min_distance = centroid_distances[centroid_prediction]
 
             knn_prediction = self.knn.predict([x])[0]
             knn_neighbors = self.knn.kneighbors([x], return_distance=False)[0]
             knn_neighbors_labels = np.concatenate((self.Y_L, self.Y_P))[knn_neighbors]
 
             same_cluster_neighbors = np.sum(knn_neighbors_labels == centroid_prediction)
-            if centroid_prediction == knn_prediction and same_cluster_neighbors > 3:
+            if centroid_prediction == knn_prediction and same_cluster_neighbors > self.k_neighbors-1:
                 self.X_P = np.vstack([self.X_P, x])
                 self.Y_U[i] = centroid_prediction
                 pseudo_labels.append(centroid_prediction)
@@ -138,9 +137,6 @@ class KNN_SHC:
         """
         迭代更新簇分配，计算经验损失和聚类损失，直到损失函数不再减小或没有新的簇产生。
         """
-        prev_loss = float('inf')
-        err_list = []
-        sse_list = []
 
         self.iterations = 0
         # 重新分配簇
@@ -152,6 +148,9 @@ class KNN_SHC:
         combined_Y = np.concatenate((self.Y_L, self.Y_U))
         self.clusters, self.labels = self.reassign_clusters(combined_X, combined_Y)
 
+        # 重新计算质心
+        self.update_centroids()
+
         print(f"迭代 {self.iterations}: 样本数量={len(combined_X)}")
         print(f"迭代 {self.iterations}: 标签数量={len(combined_Y)}")
         # self.clusters, self.labels = self.reassign_clusters(combined_X, np.concatenate((self.Y_L, self.Y_P)))
@@ -159,33 +158,6 @@ class KNN_SHC:
         while self.iterations < self.max_iterations:
             print(f"迭代 {self.iterations}: 样本个数={len(self.clusters.items())}")
 
-            # # 计算新的经验损失和SSE
-            # Y_pred = self.knn.predict(self.X_L)
-            # err = self.calculate_err(self.Y_L, Y_pred)
-            # sse = self.calculate_sse(self.clusters)
-            # err_list.append(err)
-            # sse_list.append(sse)
-            #
-            # # 归一化经验损失和SSE
-            # if np.sum(err_list) != 0:
-            #     err_normalized = err / np.sum(err_list)
-            # else:
-            #     err_normalized = 0
-            # if np.sum(sse_list) != 0:
-            #     sse_normalized = sse / np.sum(sse_list)
-            # else:
-            #     sse_normalized = 0
-            #
-            # # 计算新的损失函数
-            # new_loss = self.lambda_param * err_normalized + (1 - self.lambda_param) * sse_normalized
-            #
-            # print(f"迭代 {self.iterations}: new_loss={new_loss}, prev_loss={prev_loss}, 簇数量={len(self.clusters)}")
-            #
-            # if new_loss >= prev_loss:
-            #     print("因 new_loss >= prev_loss 而退出")
-            #     break
-            #
-            # prev_loss = new_loss
             self.iterations += 1
             has_changed = False
 
@@ -242,22 +214,6 @@ class KNN_SHC:
                                 # 更新新簇ID
                                 new_cluster_id += 1
                                 has_changed = True
-                # else:
-                #     for x in cluster_points:
-                #         knn_neighbors = self.knn.kneighbors([x], return_distance=False)[0]
-                #         knn_neighbors_labels = np.concatenate((self.Y_L, self.Y_P))[knn_neighbors]
-                #         if np.sum(knn_neighbors_labels == cluster_id) <= 3:
-                #             # 根据近邻情况将x转移到其它簇
-                #             cluster_probabilities = self.calculate_cluster_probabilities(x)
-                #             new_cluster_id = max(cluster_probabilities, key=cluster_probabilities.get)
-                #             if new_cluster_id != cluster_id:
-                #                 print(f"将样本从簇 {cluster_id} 转移到簇 {new_cluster_id}")
-                #                 self.clusters[new_cluster_id] = np.vstack([self.clusters[new_cluster_id], x])
-                #                 self.labels[new_cluster_id] = np.append(self.labels[new_cluster_id], cluster_id)
-                #                 self.clusters[cluster_id] = self.clusters[cluster_id][
-                #                     ~np.all(self.clusters[cluster_id] == x, axis=1)]
-                #                 self.labels[cluster_id] = self.labels[cluster_id][self.labels[cluster_id] != cluster_id]
-                #                 has_changed = True
 
             # 更新原簇集合
             self.clusters.update(new_clusters)
@@ -273,39 +229,39 @@ class KNN_SHC:
             # 构建标签集
             combined_Y = np.concatenate((self.Y_L, self.Y_U))
             self.clusters, self.labels = self.reassign_clusters(combined_X, combined_Y)
-            self.update_centroids()
             print(f"重新分簇后:簇个数: {len(self.clusters)},簇类别: {self.labels.items()}")
+            self.update_centroids()
 
-            # 删除空簇
-            empty_clusters = [cluster_id for cluster_id, points in self.clusters.items() if len(points) == 0]
-            for cluster_id in empty_clusters:
-                print(f"删除空簇 {cluster_id}")
-                del self.clusters[cluster_id]
-                del self.labels[cluster_id]
-                if cluster_id in self.centroids:
-                    del self.centroids[cluster_id]
-
-            # 计算簇的准确率
-            avg_acc = np.mean([
-                np.mean(np.concatenate(
-                    (self.Y_L[np.all(np.isin(self.X_L, points), axis=1)],
-                     self.Y_P[np.all(np.isin(self.X_P, points), axis=1)])) == cluster_id)
-                for cluster_id, points in self.clusters.items()
-                if len(points) > 0
-            ])
-
-            # 仅删除新簇，并将样本重新分配
-            for cluster_id in new_cluster_ids:
-                if cluster_id in self.clusters:
-                    true_labels = self.Y_L[np.all(np.isin(self.X_L, self.clusters[cluster_id]), axis=1)]
-                    pseudo_labels = self.Y_P[np.all(np.isin(self.X_P, self.clusters[cluster_id]), axis=1)]
-                    if len(true_labels) > 0 & len(pseudo_labels) > 0:
-                        acc = np.mean(np.concatenate((true_labels, pseudo_labels)) == cluster_id)
-                        if acc < avg_acc:
-                            print(f"新簇 {cluster_id} 的准确率低于平均值 {avg_acc}，删除")
-
-                            del self.clusters[cluster_id]
-                            del self.labels[cluster_id]
+            # # 删除空簇
+            # empty_clusters = [cluster_id for cluster_id, points in self.clusters.items() if len(points) == 0]
+            # for cluster_id in empty_clusters:
+            #     print(f"删除空簇 {cluster_id}")
+            #     del self.clusters[cluster_id]
+            #     del self.labels[cluster_id]
+            #     if cluster_id in self.centroids:
+            #         del self.centroids[cluster_id]
+            #
+            # # 计算簇的准确率
+            # avg_acc = np.mean([
+            #     np.mean(np.concatenate(
+            #         (self.Y_L[np.all(np.isin(self.X_L, points), axis=1)],
+            #          self.Y_P[np.all(np.isin(self.X_P, points), axis=1)])) == cluster_id)
+            #     for cluster_id, points in self.clusters.items()
+            #     if len(points) > 0
+            # ])
+            #
+            # # 仅删除新簇，并将样本重新分配
+            # for cluster_id in new_cluster_ids:
+            #     if cluster_id in self.clusters:
+            #         true_labels = self.Y_L[np.all(np.isin(self.X_L, self.clusters[cluster_id]), axis=1)]
+            #         pseudo_labels = self.Y_P[np.all(np.isin(self.X_P, self.clusters[cluster_id]), axis=1)]
+            #         if len(true_labels) > 0 & len(pseudo_labels) > 0:
+            #             acc = np.mean(np.concatenate((true_labels, pseudo_labels)) == cluster_id)
+            #             if acc < avg_acc:
+            #                 print(f"新簇 {cluster_id} 的准确率低于平均值 {avg_acc}，删除")
+            #
+            #                 del self.clusters[cluster_id]
+            #                 del self.labels[cluster_id]
 
             if not has_changed:
                 print("因没有变化而退出")
@@ -317,6 +273,30 @@ class KNN_SHC:
         """
         combined_X = np.vstack((self.X_L, self.X_U))
         self.clusters, self.labels = self.reassign_clusters(combined_X, np.concatenate((self.Y_L, self.Y_P)))
+
+    def calculate_pseudo_label_accuracy(self):
+        """
+        计算伪标签的生成准确性，排除 NaN 标签。
+        """
+        # 确保 Y_U 和 Y_True 是 numpy 数组
+        self.Y_U = np.array(self.Y_U)
+        self.Y_True = np.array(self.Y_True)
+
+        # 排除 NaN 标签
+        valid_indices = ~np.isnan(self.Y_U) & ~np.isnan(self.Y_True)
+
+        # 提取有效的伪标签和真实标签
+        pseudo_labels = self.Y_U[valid_indices]
+        true_labels = self.Y_True[valid_indices]
+        # 打印有效标签的数量
+        print(f"无标签数量: {len(self.Y_U)}")
+        # 打印有效标签的数量
+        print(f"有效伪标签数量: {len(pseudo_labels)}")
+        print(f"伪标签比例: {len(pseudo_labels)/len(self.Y_U)}")
+        # 计算准确性
+        accuracy = np.mean(pseudo_labels == true_labels)
+        print(f"伪标签生成的准确性: {accuracy:.4f}")
+        return accuracy
 
     def run(self):
         """
@@ -335,13 +315,21 @@ class KNN_SHC:
         self.iterative_clustering()
 
         # 步骤5: 最终簇划分
-        self.final_clustering()
+        # self.final_clustering()
+
+        self.calculate_pseudo_label_accuracy()
 
         return self.clusters
 
 
 # 加载Iris数据集
-data = load_breast_cancer()
+# data = load_breast_cancer()
+# data = load_wine()
+# data = load_iris()
+
+# data = fetch_openml('sonar')
+# data = fetch_openml(name='ecoli', version=1,parser='auto')
+data = load_digits()
 X, Y = data.data, data.target
 
 # 归一化数据
@@ -351,7 +339,7 @@ X = scaler.fit_transform(X)
 # 划分有标签和无标签数据
 X_L, X_U, Y_L, Y_U = train_test_split(X, Y, test_size=0.8, random_state=42)
 
-lambda_param = 0.9
+lambda_param = 0.5
 
 # 初始化KNN-SHC算法并运行
 knn_shc = KNN_SHC(X_L, Y_L, X_U, Y_U, lambda_param)
