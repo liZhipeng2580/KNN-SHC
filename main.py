@@ -39,7 +39,7 @@ class KNN_SHC:
 
     def compute_centroids(self, clusters_data):
         """
-        计算每个簇的质心，仅使用有标签的样本。
+        计算每个簇的质心，使用有标签的样本和伪标签的样本
         """
         centroids = {}
         for cluster_id, samples in clusters_data.items():
@@ -147,7 +147,9 @@ class KNN_SHC:
             knn_neighbors_labels = np.concatenate((self.Y_L, self.Y_P))[knn_neighbors]
 
             same_cluster_neighbors = np.sum(knn_neighbors_labels == centroid_prediction)
-            if centroid_prediction == knn_prediction and same_cluster_neighbors > 4:
+
+            # 设置一致性阈值
+            if centroid_prediction == knn_prediction and same_cluster_neighbors > 3:
                 self.X_P = np.vstack([self.X_P, x])
                 self.Y_U[i] = centroid_prediction
                 pseudo_labels.append(centroid_prediction)
@@ -156,7 +158,7 @@ class KNN_SHC:
 
         self.Y_P = np.array(pseudo_labels)
         self.logger.info(f"一共{len(self.X_U)}个无标签样本，生成了 {len(pseudo_labels)} 个伪标签。")
-
+        self.logger.info(f"生成伪标签后，无样本标签为：{self.Y_U}")
     def retrain_knn_with_pseudo_labels(self):
         """
         重新训练 KNN 分类器，包括有标签样本和伪标签样本。
@@ -261,7 +263,7 @@ class KNN_SHC:
 
         # 构建标签集
         combined_Y = np.concatenate((self.Y_L, self.Y_U))
-        self.clusters, self.labels = self.reassign_clusters(combined_X, combined_Y)
+        self.clusters, self.labels = self.reassign_clusters_end(combined_X, combined_Y)
         acc = self.calculate_label_accuracy()
         self.logger.info(f"分配簇的ACC为: {acc}")
 
@@ -364,7 +366,7 @@ class KNN_SHC:
             # 构建标签集
             combined_Y = np.concatenate((self.Y_L, self.Y_U))
 
-            self.clusters, self.labels = self.reassign_clusters(combined_X, combined_Y)
+            self.clusters, self.labels = self.reassign_clusters_end(combined_X, combined_Y)
             self.logger.info(f"重新分簇后:簇个数: {len(self.clusters)},簇类别: {self.labels.items()}")
             acc = self.calculate_label_accuracy()
             self.update_centroids()
@@ -412,7 +414,7 @@ class KNN_SHC:
         根据最终的质心对所有样本进行分簇。
         """
         combined_X = np.vstack((self.X_L, self.X_U))
-        self.clusters, self.labels = self.reassign_clusters(combined_X, np.concatenate((self.Y_L, self.Y_U)))
+        self.clusters, self.labels = self.reassign_clusters_end(combined_X, np.concatenate((self.Y_L, self.Y_U)))
         acc = self.calculate_label_accuracy()
         self.logger.info(f"最终分簇后:簇个数: {len(self.clusters)},簇类别: {self.labels.items()}")
         self.logger.info(f"分配簇的ACC为: {acc}")

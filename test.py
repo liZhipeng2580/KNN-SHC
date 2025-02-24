@@ -16,23 +16,23 @@ from main import KNN_SHC
 
 # 创建数据集加载字典
 datasets = {
-    'breast_cancer': load_breast_cancer,
-    'wine': load_wine,
-    'iris': load_iris,
-    'ecoli': lambda: fetch_openml(name='ecoli', version=1),
-    'glass': lambda: fetch_openml(name='glass', version=1),
-    'pendigits': lambda: fetch_openml(name='pendigits', version=1),
-    'satimage': lambda: fetch_openml(name='satimage', version=1),
-    'optdigits': lambda: fetch_openml(name='optdigits', version=1),
-    # 'webkb': lambda: fetch_openml("webkb", "cornell"),
-    'penbased': lambda: fetch_openml(name='penbased', version='active'),
-    'segment': lambda: fetch_openml(name='segment', version=1)
+    # 'breast_cancer': load_breast_cancer,
+    #  'wine': load_wine,
+    # 'iris': load_iris,
+     'ecoli': lambda: fetch_openml(name='ecoli', version=1),
+    # 'glass': lambda: fetch_openml(name='glass', version=1),
+    # 'pendigits': lambda: fetch_openml(name='pendigits', version=1),
+    #  'satimage': lambda: fetch_openml(name='satimage', version=1),
+    # 'optdigits': lambda: fetch_openml(name='optdigits', version=1),
+    # # 'webkb': lambda: fetch_openml("webkb", "cornell"),
+    # 'penbased': lambda: fetch_openml(name='penbased', version='active'),
+    # 'segment': lambda: fetch_openml(name='segment', version=1)
 }
 
 
 def setup_logger(dataset_name):
     # 获取当前日期，格式为 YYYY-MM-DD
-    current_date = datetime.now().strftime('%Y-%m-%d')
+    current_date = datetime.now().strftime('%Y-%m-%d-%H')
     log_dir = os.path.join('logs', current_date)  # 创建以日期为名的子文件夹
 
     # 确保日志文件夹存在
@@ -110,7 +110,7 @@ def run_knn_shc_on_datasets(datasets):
         Y = label_encoder.fit_transform(Y)
 
         # 划分有标签和无标签数据
-        X_L, X_U, Y_L, Y_U = train_test_split(X, Y, test_size=0.9)
+        X_L, X_U, Y_L, Y_U = train_test_split(X, Y, test_size=0.8)
         Y_L = np.array(Y_L).astype(int)
         Y_U = np.array(Y_U).astype(int)
         lambda_param = 0.5
