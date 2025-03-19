@@ -1,12 +1,16 @@
 # -*- coding: utf-8 -*-
+import time
+from datetime import datetime
+
 import numpy as np
 from collections import defaultdict
 
+import pandas as pd
 from matplotlib import pyplot as plt
 from sklearn.cluster import KMeans
 from sklearn.datasets import load_breast_cancer, load_wine, load_iris, fetch_openml
-from sklearn.decomposition import PCA
-from sklearn.manifold import TSNE
+
+
 from sklearn.model_selection import train_test_split
 from sklearn.neighbors import NearestNeighbors
 from sklearn.metrics import normalized_mutual_info_score, rand_score
@@ -402,79 +406,144 @@ if __name__ == "__main__":
     cancer = fetch_openml(name='ecoli', version=1)
     X, y = cancer.data, cancer.target
     y = cancer.target.to_numpy()
+
     # 数据预处理
     scaler = StandardScaler()
     X = scaler.fit_transform(X)
 
-    # 分割数据集（使用10%作为有标签数据）
-    X_L, X_U, y_L, y_U = train_test_split(
-        X, y,
-        test_size=0.8,  # 90%作为无标签数据
-        stratify=y,
+    # 获取真实类别数
+    true_clusters = len(np.unique(y))
+    print(f"数据集信息：样本数={len(X)}, 特征数={X.shape[1]}, 真实类别数={true_clusters}")
 
-    )
+    # 初始化结果存储
+    results = {
+        'SHC': {'NMI': [], 'RI': [], 'Time': []},
+        'KMeans': {'NMI': [], 'RI': [], 'Time': []}
+    }
+    results_df = pd.DataFrame(columns=['Run', 'SHC_NMI', 'SHC_RI', 'SHC_Time',
+                                       'KMeans_NMI', 'KMeans_RI', 'KMeans_Time'])
 
-    # 初始化模型（调整参数）
-    model = KNN_SHC(
-        lambda_param=0.5,  # 提高距离权重
-        k_neighbors=5,  # 增加近邻数
-        max_iters=20  # 增加迭代次数
-    )
+    # 进行实验
+    num_runs = 50
+    for run in range(num_runs):
+        print(f"\n=== 第 {run + 1}/{num_runs} 次实验 ===")
 
-    # 训练模型
-    model.fit(X_L, y_L, X_U)
+        # 数据分割
+        try:
+            X_L, X_U, y_L, y_U = train_test_split(
+                X, y,
+                test_size=0.9,
+                stratify=y,
+                random_state=run
+            )
 
-    # 评估结果
-    metrics = model.evaluate(X_U, y_U)
-    print("\n数据集评估结果：")
-    print(f"NMI: {metrics['NMI']:.4f}")
-    print(f"Rand Index: {metrics['RI']:.4f}")
+            # if len(np.unique(y_L)) < true_clusters:
+            #     print(f"警告：标签不完整，跳过本次运行")
+            #     continue
+        except Exception as e:
+            print(f"数据分割错误: {str(e)}")
+            continue
 
-    # 对比全监督基准
-    from sklearn.cluster import KMeans
+        # 运行KNN-SHC
+        shc_metrics = {'NMI': np.nan, 'RI': np.nan}
+        try:
+            shc_start = time.time()
+            model = KNN_SHC(lambda_param=0.5, k_neighbors=5, max_iters=20)
+            model.fit(X_L, y_L, X_U)
+            shc_time = time.time() - shc_start
+            shc_metrics = model.evaluate(X_U, y_U)
+            print(f"当前运行指标 -> NMI: {shc_metrics['NMI']:.4f}, RI: {shc_metrics['RI']:.4f}")
+        except Exception as e:
+            print(f"KNN-SHC 错误: {str(e)}")
 
-    kmeans = KMeans(n_clusters=4, random_state=42)
-    kmeans.fit(X_L)
-    kmeans_pred = kmeans.predict(X_U)
-    print("\nKMeans基准：")
-    print(f"NMI: {normalized_mutual_info_score(y_U, kmeans_pred):.4f}")
-    print(f"RI: {rand_score(y_U, kmeans_pred):.4f}")
+        # 运行KMeans
+        kmeans_metrics = {'NMI': np.nan, 'RI': np.nan}
+        try:
+            kmeans_start = time.time()
+            kmeans = KMeans(n_clusters=true_clusters, random_state=run)
+            kmeans_pred = kmeans.fit_predict(X_U)
+            kmeans_time = time.time() - kmeans_start
+            kmeans_metrics = {
+                'NMI': normalized_mutual_info_score(y_U, kmeans_pred),
+                'RI': rand_score(y_U, kmeans_pred)
+            }
+        except Exception as e:
+            print(f"KMeans 错误: {str(e)}")
 
-    # 可视化对比（修正版：仅在可视化时降维）
-    plt.figure(figsize=(18, 6))
+        # 记录结果
+        new_row = {
+            'Run': run + 1,
+            'SHC_NMI': shc_metrics['NMI'],
+            'SHC_RI': shc_metrics['RI'],
+            'SHC_Time': shc_time if 'shc_time' in locals() else np.nan,
+            'KMeans_NMI': kmeans_metrics['NMI'],
+            'KMeans_RI': kmeans_metrics['RI'],
+            'KMeans_Time': kmeans_time if 'kmeans_time' in locals() else np.nan
+        }
+        results_df = pd.concat([results_df, pd.DataFrame([new_row])], ignore_index=True)
 
-    # 子图1：原始数据分布（使用 PCA 降维后的结果）
-    pca = PCA(n_components=2)
-    X_pca = pca.fit_transform(X)
+    # 保存结果到Excel
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    filename = f"clustering_results_{timestamp}.xlsx"
 
-    plt.subplot(1, 3, 1)
-    plt.scatter(X_pca[:, 0], X_pca[:, 1], c=y, cmap='viridis')
-    plt.title("Original Data (PCA投影)")
-    plt.xlabel("PCA Component 1")
-    plt.ylabel("PCA Component 2")
+    with pd.ExcelWriter(filename, engine='xlsxwriter') as writer:
+        # 详细结果
+        results_formatted = results_df.round(4)
+        results_formatted.to_excel(writer, sheet_name='详细结果', index=False)
 
-    # 子图2：SHC聚类结果（基于原始数据训练，但用 PCA 可视化）
-    shc_labels = []
-    for x in X:
-        probs = [model._calculate_probability(x, c) for c in model.clusters]
-        if not probs:
-            shc_labels.append(-1)
-        else:
-            shc_labels.append(model.clusters[np.argmax(probs)].label)
-    plt.subplot(1, 3, 2)
-    plt.scatter(X_pca[:, 0], X_pca[:, 1], c=shc_labels, cmap='viridis', alpha=0.6)
-    plt.title("SHC Clustering (PCA投影)")
-    plt.xlabel("PCA Component 1")
-    plt.ylabel("PCA Component 2")
+        # 统计摘要
+        stats = pd.DataFrame({
+            'Metric': ['NMI', 'RI', 'Time(s)'],
+            'SHC_Mean': [
+                results_df['SHC_NMI'].mean(),
+                results_df['SHC_RI'].mean(),
+                results_df['SHC_Time'].mean()
+            ],
+            'SHC_Std': [
+                results_df['SHC_NMI'].std(),
+                results_df['SHC_RI'].std(),
+                results_df['SHC_Time'].std()
+            ],
+            'KMeans_Mean': [
+                results_df['KMeans_NMI'].mean(),
+                results_df['KMeans_RI'].mean(),
+                results_df['KMeans_Time'].mean()
+            ],
+            'KMeans_Std': [
+                results_df['KMeans_NMI'].std(),
+                results_df['KMeans_RI'].std(),
+                results_df['KMeans_Time'].std()
+            ]
+        })
+        stats.to_excel(writer, sheet_name='统计摘要', index=False)
 
-    # 子图3：KMeans基准结果（同样使用 PCA 可视化）
-    kmeans_labels = kmeans.predict(X)
-    plt.subplot(1, 3, 3)
-    plt.scatter(X_pca[:, 0], X_pca[:, 1], c=kmeans_labels, cmap='viridis', alpha=0.6)
-    plt.title("KMeans Clustering (PCA投影)")
-    plt.xlabel("PCA Component 1")
-    plt.ylabel("PCA Component 2")
+        # 格式设置
+        workbook = writer.book
+        header_format = workbook.add_format({
+            'bold': True,
+            'text_wrap': True,
+            'valign': 'top',
+            'fg_color': '#D7E4BC',
+            'border': 1
+        })
 
-    plt.tight_layout()
-    plt.show()
+        for sheet in writer.sheets:
+            worksheet = writer.sheets[sheet]
+            for col_num, value in enumerate(results_formatted.columns):
+                worksheet.write(0, col_num, value, header_format)
+            worksheet.set_column(0, 0, 8)
+            worksheet.set_column(1, len(results_formatted.columns) - 1, 12)
+
+    print(f"\n实验结果已保存至: {filename}")
+
+    # 可视化
+    plt.figure(figsize=(12, 5))
+    plt.subplot(1, 2, 1)
+    plt.boxplot([results_df['SHC_NMI'], results_df['KMeans_NMI']],
+                labels=['SHC', 'KMeans'])
+    plt.title('Normalized Mutual Information')
+
+    plt.subplot(1, 2, 2)
+    plt.boxplot([results_df['SHC_RI'], results_df['KMeans_RI']],
+                labels=['SHC', 'KMeans'])
 
